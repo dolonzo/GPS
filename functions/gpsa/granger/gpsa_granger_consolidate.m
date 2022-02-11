@@ -98,7 +98,7 @@ if(~isempty(strfind(operation, 'c')))
                     for (i_ROI = 1:length(roidata.decodeROIs))
                       decodingROIs(i_ROI).name = roidata.decodeROIs(i_ROI).name;
                       decodingROIs(i_ROI).avgAccuracy(i_subject, :) = ...
-                          interp1(roidata.sample_times, roidata.decodeROIs(i_ROI).avgAccuracy, sample_times);
+                          interp1(roidata.decodeROIs(i_ROI).accTimes, roidata.decodeROIs(i_ROI).avgAccuracy, sample_times);
                       N_subROIs = length(roidata.decodeROIs(i_ROI).subrois);
                       for (i_subROI = 1:N_subROIs)
                         decodingROIs(i_ROI).subROIdata(i_subject, i_subROI, :) = ...

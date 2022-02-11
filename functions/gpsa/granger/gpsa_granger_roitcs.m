@@ -252,29 +252,12 @@ if(~isempty(strfind(operation, 'c')))
         ind = contains(names, 'accuracy');
         decodeROI.avgAccuracy = avgAccuracy.(names{ind});
           
-        % DS: changed to zeropadding for production
-        acc_zeroindex = find(avgAccuracy.Time==0);
-        mne_zeroindex = find(sample_times==0);
-        while (length(decodeROI.avgAccuracy) ~= N_samples) || (acc_zeroindex ~= mne_zeroindex) %if there's a mismatch in length or 
-          if acc_zeroindex < mne_zeroindex
-              padbefore = mne_zeroindex - acc_zeroindex;
-              decodeROI.avgAccuracy = [zeros(1, padbefore), decodeROI.avgAccuracy];
-              avgAccuracy.Time = [nan(1, padbefore), avgAccuracy.Time];
-          elseif acc_zeroindex > mne_zeroindex
-              removebefore = acc_zeroindex - mne_zeroindex;
-              decodeROI.avgAccuracy = decodeROI.avgAccuracy(1+removebefore:end);
-              avgAccuracy.Time = avgAccuracy.Time(1+removebefore:end);
-          elseif length(decodeROI.avgAccuracy) > N_samples
-              removeafter = length(decodeROI.avgAccuracy) - N_samples;
-              decodeROI.avgAccuracy = decodeROI.avgAccuracy(1:end-removeafter);
-              avgAccuracy.Time = avgAccuracy.Time(1:end-removeafter);
-          elseif length(decodeROI.avgAccuracy) < N_samples
-              padafter = N_samples - length(decodeROI.avgAccuracy);
-              decodeROI.avgAccuracy = [decodeROI.avgAccuracy, zeros(1, padafter)];
-              avgAccuracy.Time = [avgAccuracy.Time, zeros(1, padafter)];
-          end
-          acc_zeroindex = find(avgAccuracy.Time==0);
-        end
+        % DS: just store the accuracy time series in addition to the
+        % accuracy values. Consolidate interpolates anyway, so if we
+        % provide the accuracy time series, we don't need to worry about
+        % sampling issues/mismatched time windows (as long as the zero
+        % point remains the same.
+        decodeROI.accTimes = avgAccuracy.Time;
         
         decodeROIs = [decodeROIs, decodeROI];
       end
