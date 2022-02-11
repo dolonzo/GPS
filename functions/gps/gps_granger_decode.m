@@ -45,8 +45,9 @@ end
 all_src_ROIs = src_ROIs;
 all_rcv_ROIs = rcv_ROIs;
 
-% A loop across decoding ROIs.
-for i_decodeROI = 1:length(decodingROIs)
+% A loop across decoding ROIs. One additional iteration without exploding
+% any ROIs but replacing all decoders with accuracy data
+for i_decodeROI = 1:length(decodingROIs)+1 
   % Create the granger_causality_indices array that will receive the results for
   % this ROI.
   granger_causality_indices = zeros(N_ROIs, N_ROIs, N_time);
@@ -55,13 +56,19 @@ for i_decodeROI = 1:length(decodingROIs)
   rcv_ROIs = all_rcv_ROIs;
     
   % This is the index into the ROI list of this decoding ROI.
-  sourceROIindex = decodingROIlist(i_decodeROI);
+  if i_decodeROI > length(decodingROIs) %if the last iteration with no exploding
+      sourceROIindex = 0; %zero sourceROIindex
+      sourceROIdata = []; %emtpy sourceROIdata
+      N_subROIs = 1; %we always use N_subROIs-1, so set N_subROIs to 1 to cancel out
+  else
+      sourceROIindex = decodingROIlist(i_decodeROI);
 
-  % Grab the activation time series for each of the subROIs.
-  sourceROIdata = decodingROIs(i_decodeROI).subROIdata;
+      % Grab the activation time series for each of the subROIs.
+      sourceROIdata = decodingROIs(i_decodeROI).subROIdata;
 
-  % Count the subROIs.
-  [~, N_subROIs, ~] = size(sourceROIdata);
+      % Count the subROIs.
+      [~, N_subROIs, ~] = size(sourceROIdata);
+  end
   
   % Substitute the accuracy time series for all the "good" ROIs that are
   % not the one we're looking at just now.
@@ -85,7 +92,7 @@ for i_decodeROI = 1:length(decodingROIs)
     elseif (decodingROIlist(i_goodROI) == N_ROIs) % Are we last?
       modifiedData = cat(2, modifiedData(:, 1:(N_ROIs-1), :), ...
           scale*reshape(decodingROIs(i_goodROI).avgAccuracy, N_subjects, 1, N_time));
-    else % Middle, apparently.
+    els % Middle, apparently.
       targetROI = decodingROIlist(i_goodROI);
       modifiedData = cat(2, modifiedData(:, 1:(targetROI-1), :), ...
           scale*reshape(decodingROIs(i_goodROI).avgAccuracy, N_subjects, 1, N_time),...
@@ -100,7 +107,7 @@ for i_decodeROI = 1:length(decodingROIs)
     modifiedData = cat(2, sourceROIdata, modifiedData(:, 2:N_ROIs, :));
   elseif (sourceROIindex == N_ROIs) % Are we last?
     modifiedData = cat(2, modifiedData(:, 1:(N_ROIs-1), :), sourceROIdata);
-  else % Middle, apparently.
+  elseif (sourceROIindex ~= 0) % Middle, apparently and not zero.
     modifiedData = cat(2, modifiedData(:, 1:(sourceROIindex-1), :),...
         sourceROIdata, modifiedData(:, (sourceROIindex+1):N_ROIs, :));
   end
@@ -183,7 +190,11 @@ for i_decodeROI = 1:length(decodingROIs)
   end % For Each Timepoint
 
   % Tuck new granger_causality_indices into a struct with ROI labels.
-  gciPkg(i_decodeROI).name = decodingROIs(i_decodeROI).name;
+  if i_decodeROI > length(decodingROIs)
+      gciPkg(i_decodeROI).name = 'No Exploded';
+  else
+      gciPkg(i_decodeROI).name = decodingROIs(i_decodeROI).name;
+  end
   gciPkg(i_decodeROI).indices = granger_causality_indices;
 
 end % End loop over decoding ROIs.
