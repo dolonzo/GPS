@@ -87,10 +87,10 @@ if(~isempty(strfind(operation, 'c')))
     all_greater = zeros(size(data.results));
     for j = 1:data.N_comp
         iter_greater = data.results(data.snks, data.srcs, :) >= squeeze(rawdata.total_control_granger(:,:,:, j));
-        all_greater = all_greater + iter_greater;
+        all_greater(data.snks, data.srcs, :) = all_greater(data.snks, data.srcs, :) + iter_greater;
     end
     p_values = squeeze(all_greater./data.N_comp);
-    data.p_values(data.snks, data.srcs, :) = p_values; %do we need to change to NaN? How is this used in future?
+    data.p_values(data.snks, data.srcs, :) = p_values(data.snks, data.srcs, :); %do we need to change to NaN? How is this used in future?
     
     % Get the line of each percentile
     data.perc10 = zeros(size(data.results));
