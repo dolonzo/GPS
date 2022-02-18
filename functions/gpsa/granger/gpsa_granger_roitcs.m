@@ -206,6 +206,8 @@ if(~isempty(strfind(operation, 'c')))
         % sub-ROIs that it contains.
         decodeROI.name = rois.rois(iRoi).name;
         decodeROI.subrois = [];
+        
+        missingFirst = 0;
 
         % Loop through the subdivisions and grab data when there is a match.
         for iLabelFile = 1:length(labelFiles)
@@ -216,6 +218,10 @@ if(~isempty(strfind(operation, 'c')))
           [~, subroi.name, ~] = fileparts(labelFiles(iLabelFile).name);
           subroi.vertexMap = [];
           subroi.vertices = [];
+          if contains(labelFiles(iLabelFile).name, 'rh')
+              brain = gps_brain_get(subject);
+              labelFileContents.vertices = labelFileContents.vertices+brain.N_L;
+          end
 
           %% Check to make sure at least one of the subROI's vertices
           %% has an activation time series associated with it.
@@ -234,14 +240,38 @@ if(~isempty(strfind(operation, 'c')))
             % that have any.
             subroi.activationData = mean(cortexdata_waves([subroi.vertexMap], :), 1);
           else
-            subroi.activationData = [];
-            disp(sprintf("Missing a time series for %s", ...
-                         labelFiles(iLabelFile).name));
+            % If a subdivision does not contain a source vertex, copy the data
+            % from the previous vertex to maintain proper dimensions. David
+            % G states this will not effect Kalman and since we
+            % remove all subdivisions at once does not violate Granger
+            if iLabelFile == 1
+                missingFirst = 1;
+                continue
+            end
+            
+            fprintf('Missing a time series for %s\n', ...
+                         labelFiles(iLabelFile).name);
+            subroi.activationData = decodeROI.subrois(end).activationData;
+            subroi.vertices = decodeROI.subrois(end).vertices;
+            subroi.vertexMap = decodeROI.subrois(end).vertexMap;
+            fprintf('Copied time series from %s in its place\n', ...
+                decodeROI.subrois(end).name);
           end
           decodeROI.subrois = [decodeROI.subrois subroi];
         end
+        
+        if missingFirst
+            fprintf('Missing a time series for %s\n', ...
+                        decodeROI.subrois(1).name);
+            decodeROI.subrois(1).activationData = decodeROI.subrois(2).activationData;
+            decodeROI.subrois(1).vertices = decodeROI.subrois(2).vertices;
+            decodeROI.subrois(1).vertexMap = decodeROI.subrois(2).vertexMap;
+            fprintf('Copied time series from %s in its place\n', ...
+                        decodeROI.subrois(2).name);
+        end
+        
         % While we're here, also grab the error time series...
-         
+        
         resultFile = sprintf("%s/%s/%s_%s*.mat", ...
           gps_filename(study, subject, condition, 'decoding_analysis_subject_results_dir'),...
           rois.rois(iRoi).name, subject.name, rois.rois(iRoi).name);
