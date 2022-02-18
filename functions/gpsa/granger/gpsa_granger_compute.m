@@ -72,10 +72,10 @@ if(~isempty(strfind(operation, 'c')))
         % Granger
         granger_results = gps_sethgranger_granger(datafile.data, model_order, pred_adapt);
         
-    % This is the decoding analysis, with the activation series and sub-ROIs.  I do
-    % not have a way to toggle whether to use this or not, so change the (1) to a 
-    % (0) to get the normal behavior.
-    elseif (1)
+    % This is the decoding analysis, with the activation series and
+    % sub-ROIs. Toggled based on the decodingROIs structure not being
+    % empty.
+    elseif (isfield(datafile, 'decodingROIs') && ~isempty(datafile.decodingROIs))
         stream = '';
         
         % Initial Kalman
@@ -101,9 +101,12 @@ if(~isempty(strfind(operation, 'c')))
     % Prepare saving structure
     description = sprintf('%s%s', description, stream);
     datafile.description = description;
-    
-    datafile.granger_results = granger_results(1).indices;
-    datafile.granger_result_package = granger_results;
+    if isstruct(granger_results)
+        datafile.granger_results = granger_results(1).indices;
+        datafile.granger_result_package = granger_results;
+    else
+        datafile.granger_results = granger_results;
+    end
     datafile.sspace = sspace;
     datafile.W_all = W_all;
     datafile.residual = residual;
