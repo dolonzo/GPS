@@ -129,7 +129,7 @@ for i_decodeROI = 1:length(decodingROIs)+1
   rcv_ROIs = rcv_ROIs(nonexpIndices);
   adj_rcvROIs = adj_rcvROIs(nonexpIndices);
   
-  prediction_error_standard = gps_kalman(modifiedData, model_order, pred_adapt);
+  [ss, prediction_error_standard, res] = gps_kalman(modifiedData, model_order, pred_adapt);
   % Excluded ROI x prediction_error matrix
   prediction_errors_withoutROI = zeros(N_ROIs, N_ROIs+N_subROIs-1, ...
                                        N_ROIs+N_subROIs-1, N_time); 
@@ -196,7 +196,41 @@ for i_decodeROI = 1:length(decodingROIs)+1
       gciPkg(i_decodeROI).name = decodingROIs(i_decodeROI).name;
   end
   gciPkg(i_decodeROI).indices = granger_causality_indices;
+  gciPkg(i_decodeROI).sspace = ss;
+  gciPkg(i_decodeROI).residuals = res;
+  gciPkg(i_decodeROI).modifiedData = modifiedData;
 
 end % End loop over decoding ROIs.
 
+% Add another GCi array which selects the GCi values we are interested in:
+% For source ROIs that decode, use the GCi values from the exploded source
+% For source ROIs that do not decode, use the GCi values from the last set
+% with no exploded sources. Decoding ROIs will always be accuracy time
+% series when acting as sinks, so we can choose the set purely on the source
+% ROI.
+gciPkg = repackage_gcis(gciPkg, decodingROIlist, all_src_ROIs, all_rcv_ROIs);
+
 end % function
+
+function package_struct = repackage_gcis(package_struct, decodingROIs, src_ROIs, rcv_ROIs)
+n_gcisets = length(package_struct);
+
+collapsed_gcis = zeros(size(package_struct(1).indices));
+
+for i_ROI = src_ROIs
+    % if this source decodes, use the values from that set
+    i_set = find(decodingROIs == i_ROI);
+    % if it doesn't, use the last set with no exploded
+    if isempty(i_set)
+        i_set = n_gcisets;
+    end
+    
+    for j_ROI = rcv_ROIs
+        collapsed_gcis(j_ROI, i_ROI, :) = package_struct(i_set).indices(j_ROI, i_ROI, :);
+    end
+end
+
+package_struct(end+1).name = 'Collapsed';
+package_struct(end).indices = collapsed_gcis;
+
+end %function
