@@ -49,10 +49,24 @@ if(~isempty(strfind(operation, 'c')))
     % Get inputs
     grangerfile = load(inputfilename);
     
-    sspace = grangerfile.sspace;
-    residuals = grangerfile.residual;
+    if isfield(grangerfile, 'decodingROIs') && ~isempty(grangerfile.decodingROIs)
+        sspace_all = {grangerfile.granger_result_package(:).sspace};
+        sspace = sspace_all{1}; %May need for parfor loop?
+        residuals_all = {grangerfile.granger_result_package(:).residuals};
+        residuals = residuals_all{1}; %May need for parfor loop?
+        modifiedData = {grangerfile.granger_result_package(:).modifiedData};
+        roinames = {grangerfile.rois(:).name};
+        decodingROInames = {grangerfile.decodingROIs(:).name};
+        [~, decodingROIlist, ~] = intersect(roinames, decodingROInames);
+        decoders = 1;
+        granger_results = grangerfile.granger_result_package(end).indices; %For purposes of saving
+    else
+        sspace = grangerfile.sspace;
+        residuals = grangerfile.residual;
+        decoders = 0;
+        granger_results = grangerfile.granger_results; %#ok<NASGU> For purposes of saving
+    end
     data = grangerfile.data;
-    granger_results = grangerfile.granger_results; %#ok<NASGU>
     rois = grangerfile.rois;
     pred_adapt = grangerfile.pred_adapt;
     model_order = grangerfile.model_order;
@@ -68,6 +82,10 @@ if(~isempty(strfind(operation, 'c')))
     % Determine the areas to focus on
     all_rois = {rois.name};
     src_selection = condition.granger.focus;
+    inclusive_focus = 0;
+    % inclusive_focus generates null hypotheses for all source-sink pairs
+    % which involve at least one focus ROI. Set to zero to only generate
+    % nulls between focus ROIs
     
     if(~isempty(src_selection))
         focus_ROIs = zeros(N_ROIs, 1);
@@ -78,28 +96,41 @@ if(~isempty(strfind(operation, 'c')))
                 end
             end
         end
-        
-        src_ROIs{1} = find(focus_ROIs); %first set with focus ROIs as source
-		src_ROIs{2} = 1:N_ROIs; %second set with all ROIs as source
-		snk_ROIs{1} = 1:N_ROIs;	%first set with all ROIs as sink
-        snk_ROIs{2} = src_ROIs{1}; %second set with focus ROIs as sink
+        if inclusive_focus
+            src_ROIs{1} = find(focus_ROIs); %first set with focus ROIs as source
+            src_ROIs{2} = setdiff(1:N_ROIs, src_ROIs{1}); %second set with all ROIs (except focus) as source
+            snk_ROIs{1} = 1:N_ROIs;	%first set with all ROIs as sink
+            snk_ROIs{2} = src_ROIs{1}; %second set with focus ROIs as sink
+            N_src_set1 = length(src_ROIs{1});
+            N_snk_set1 = length(snk_ROIs{1});
+            N_src_set2 = length(src_ROIs{2});
+            N_snk_set2 = length(snk_ROIs{2});
+        else
+            src_ROIs{1} = find(focus_ROIs);
+            snk_ROIs{1} = find(focus_ROIs);
+            src_ROIs{2} = [];
+            snk_ROIs{2} = [];    
+            N_src_set1 = length(src_ROIs{1});
+            N_snk_set1 = length(snk_ROIs{1});
+            N_src_set2 = 1; % zero length breaks parfor
+            N_snk_set2 = 1; % zero length breaks parfor
+        end
+        N_src = max(length(src_ROIs{1}), length(src_ROIs{2}));
+        N_snk = max(length(snk_ROIs{1}), length(snk_ROIs{2}));
     else
-        src_ROIs = 1:N_ROIs;
-        snk_ROIs = 1:N_ROIs;
+        src_ROIs{1} = 1:N_ROIs;
+        snk_ROIs{1} = 1:N_ROIs;
+        src_ROIs{2} = [];
+        snk_ROIs{2} = [];
+        N_src_set1 = length(src_ROIs{1});
+        N_snk_set1 = length(snk_ROIs{1});
+        N_src_set2 = 1; % zero length breaks parfor
+        N_snk_set2 = 1; % zero length breaks parfor
+        N_src = N_ROIs;
+        N_snk = N_ROIs;
     end
-
-	if iscell(src_ROIs)
-		N_sets = length(src_ROIs);
-	else
-		N_sets = 1;
-	end
-    N_src = max(length(src_ROIs{1}), length(src_ROIs{2}));
-    N_snk = max(length(snk_ROIs{1}), length(snk_ROIs{2}));
     
-    N_src_set1 = length(src_ROIs{1});
-    N_snk_set1 = length(snk_ROIs{1});
-    N_src_set2 = length(src_ROIs{2});
-    N_snk_set2 = length(snk_ROIs{2});
+
     
     % Preallocate the huge null hypothesis matrix
 %     total_control_granger = nan(N_snk, N_src, N_time, N_comp, 'single'); %change to nan to hopefully prevent problems when it is used since it will be a sparse matrix
@@ -120,48 +151,71 @@ if(~isempty(strfind(operation, 'c')))
         
         % Compute ALOT of times
         parfor i_comp = 1:N_comp
+        %for i_comp = 1:N_comp % for loop for debugging
             %     for i_comp = 1:N_comp
             tcomp = tic;
             
-            % Step 5: For each subject, resample the residuals (random sampling
-            % with replacement)
-            residuals_resample = zeros(N_trials, N_ROIs, N_time);
-            
-            % Reorder within each trial?
-            for i_trial = 1:N_trials
-                for i_ROI = 1:N_ROIs
-                    N_reorder = N_time;
-                    reorder = randperm(N_reorder);
-                    
-                    residuals_resample(i_trial, i_ROI, :) = residuals(i_trial, i_ROI, reorder);
-                end % For all time
-            end % For all trials
-            i_set = 1;
+            i_null_set = 1;
             % Compare all ROIs...
             for i_src = 1:N_src_set1
-                i_ROI_src = src_ROIs{i_set}(i_src); %#ok<*PFBNS>
+                i_ROI_src = src_ROIs{i_null_set}(i_src); %#ok<*PFBNS>
+                            % Step 5: For each subject, resample the residuals (random sampling
+                % with replacement)
+                residuals_resample = zeros(N_trials, N_ROIs, N_time);
+%                 resid = zeros(N_trials, N_ROIs, N_time);
+%                 ss = zeros(N_ROIs*modelorder, N_ROIs, N_time);
+%                 dat = zeros(N_trials, N_ROIs, N_time);
+%                 gci = zeros(N_ROIs, N_ROIs, N_time);
+                
+                if decoders
+                    if any(decodingROIlist==i_ROI_src)
+                        i_granger = find(decodingROIlist==i_ROI_src);
+                    else
+                        i_granger = length(decodingROIlist)+1;
+                    end
+                    %fprintf('Granger Set Number %d\n', i_granger);
+                    resid = residuals_all{i_granger};
+                    ss = sspace_all{i_granger};
+                    dat = modifiedData{i_granger};
+                    %disp(N_subROIs);
+                else
+                    resid = residuals;
+                    ss = sspace;
+                    dat = data;
+                end
+                
+                N_subROIs = size(dat, 2) - N_ROIs + 1; 
+                % Reorder within each trial?
+                for i_trial = 1:size(dat, 1)
+                    for i_ROI = 1:size(dat, 2)
+                        N_reorder = N_time;
+                        reorder = randperm(N_reorder);
+                    
+                        residuals_resample(i_trial, i_ROI, :) = resid(i_trial, i_ROI, reorder);
+                    end % For all time
+                end % For all trials
                 
                 % ... with all other ROIs
                 % run time
                 for i_snk = 1:N_snk_set1
-                    j_ROI_snk = snk_ROIs{i_set}(i_snk);
+                    j_ROI_snk = snk_ROIs{i_null_set}(i_snk);
                     
-                    bstrap_time = zeros(N_trials, N_ROIs, N_time);
+                    bstrap_time = zeros(N_trials, N_ROIs+N_subROIs-1, N_time);
                     
                     % Indices in the source space that record ROI i influece.
                     model_order_end = j_ROI_snk*model_order;
                     start_ind = model_order_end - (model_order-1);
                     
                     % Define the source space excluding ROI i (xi)
-                    sspace_xi = sspace;
-                    sspace_xi(start_ind:model_order_end,i_ROI_src,:) = 0;
+                    sspace_xi = ss;
+                    sspace_xi(start_ind:model_order_end,i_ROI_src:i_ROI_src+N_subROIs-1,:) = 0;
                     
                     % Build a new time series
                     for n = (model_order+1):N_time % Length in terms of time
                         
                         % Build the time window for the current timepoint
-                        H = data(:, :, n - (model_order:-1:1));
-                        H = reshape(H, N_trials, N_ROIs * model_order);
+                        H = dat(:, :, n - (model_order:-1:1));
+                        H = reshape(H, N_trials, (N_ROIs+N_subROIs-1) * model_order);
                         
                         sspace_xi_n = squeeze(sspace_xi(:,:,n));
                         
@@ -171,7 +225,7 @@ if(~isempty(strfind(operation, 'c')))
                     
                     bstrap_time = bstrap_time + residuals_resample;
                     
-                    bstrap_time(:,:,1:model_order) = data(:,:,1:model_order);
+                    bstrap_time(:,:,1:model_order) = dat(:,:,1:model_order);
                     
                     % Run granger on this
                     
@@ -181,15 +235,51 @@ if(~isempty(strfind(operation, 'c')))
                 end
             end % For all ROIs
 
-			i_set = 2;
+			if ~isempty(src_ROIs{2})
+            i_null_set = 2;
             % Compare all ROIs...
             for i_src = 1:N_src_set2
-                i_ROI_src = src_ROIs{i_set}(i_src); %#ok<*PFBNS>
+                i_ROI_src = src_ROIs{i_null_set}(i_src); %#ok<*PFBNS>
+                            % Step 5: For each subject, resample the residuals (random sampling
+                % with replacement)
+                residuals_resample = zeros(N_trials, N_ROIs, N_time);
+%                 resid = zeros(N_trials, N_ROIs, N_time);
+%                 ss = zeros(N_ROIs*modelorder, N_ROIs, N_time);
+%                 dat = zeros(N_trials, N_ROIs, N_time);
+%                 gci = zeros(N_ROIs, N_ROIs, N_time);
+                
+                if decoders
+                    if any(decodingROIlist==i_ROI_src)
+                        i_granger = find(decodingROIlist==i_ROI_src);
+                    else
+                        i_granger = length(decodingROIlist)+1;
+                    end
+                    %fprintf('Granger Set Number %d\n', i_granger);
+                    resid = residuals_all{i_granger};
+                    ss = sspace_all{i_granger};
+                    dat = modifiedData{i_granger};
+                else
+                    resid = residuals;
+                    ss = sspace;
+                    dat = data;
+                end
+                
+                N_subROIs = size(dat, 2) - N_ROIs + 1;
+            
+                % Reorder within each trial?
+                for i_trial = 1:size(dat, 1)
+                    for i_ROI = 1:size(dat, 2)
+                        N_reorder = N_time;
+                        reorder = randperm(N_reorder);
+                    
+                        residuals_resample(i_trial, i_ROI, :) = resid(i_trial, i_ROI, reorder);
+                    end % For all time
+                end % For all trials
                 
                 % ... with all other ROIs
                 % run time
                 for i_snk = 1:N_snk_set2
-                    j_ROI_snk = snk_ROIs{i_set}(i_snk);
+                    j_ROI_snk = snk_ROIs{i_null_set}(i_snk);
                     
                     bstrap_time = zeros(N_trials, N_ROIs, N_time);
                     
@@ -198,15 +288,15 @@ if(~isempty(strfind(operation, 'c')))
                     start_ind = model_order_end - (model_order-1);
                     
                     % Define the source space excluding ROI i (xi)
-                    sspace_xi = sspace;
-                    sspace_xi(start_ind:model_order_end,i_ROI_src,:) = 0;
+                    sspace_xi = ss;    
+                    sspace_xi(start_ind:model_order_end,i_ROI_src:i_ROI_src+N_subROIs-1,:) = 0;
                     
                     % Build a new time series
                     for n = (model_order+1):N_time % Length in terms of time
                         
                         % Build the time window for the current timepoint
-                        H = data(:, :, n - (model_order:-1:1));
-                        H = reshape(H, N_trials, N_ROIs * model_order);
+                        H = dat(:, :, n - (model_order:-1:1));
+                        H = reshape(H, N_trials, (N_ROIs+N_subROIs-1) * model_order);
                         
                         sspace_xi_n = squeeze(sspace_xi(:,:,n));
                         
@@ -216,7 +306,7 @@ if(~isempty(strfind(operation, 'c')))
                     
                     bstrap_time = bstrap_time + residuals_resample;
                     
-                    bstrap_time(:,:,1:model_order) = data(:,:,1:model_order);
+                    bstrap_time(:,:,1:model_order) = dat(:,:,1:model_order);
                     
                     % Run granger on this
                     
@@ -225,7 +315,7 @@ if(~isempty(strfind(operation, 'c')))
                     
                 end
             end % For all ROIs
-            
+            end % if there is a second set
             
             
             % Mark how long it has taken
@@ -244,9 +334,14 @@ if(~isempty(strfind(operation, 'c')))
         end
         
         total_control_granger = nan(N_snk, N_src, N_time, N_comp, 'single');
-        total_control_granger(snk_ROIs{1}, src_ROIs{1}, :, :) = total_control_granger_set1;
+
+        if ~isempty(src_ROIs{2})
+            total_control_granger(snk_ROIs{1}, src_ROIs{1}, :, :) = total_control_granger_set1;
+            total_control_granger(snk_ROIs{2}, src_ROIs{2}, :, :) = total_control_granger_set2;
+        else
+            total_control_granger = total_control_granger_set1;
+        end
         clear total_control_granger_set1
-        total_control_granger(snk_ROIs{2}, src_ROIs{2}, :, :) = total_control_granger_set2;
         clear total_control_granger_set2
         %total_control_granger(snk_ROIs{1}, src_ROIs{1}, :, :) = total_control_granger_set1;
         %clear total_control_granger_set1
