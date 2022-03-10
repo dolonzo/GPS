@@ -49,12 +49,16 @@ if(~isempty(strfind(operation, 'c')))
     % Get inputs
     grangerfile = load(inputfilename);
     
+    % If we ran an integrated decoding analysis, we have multiple sets of
+    % Kalman outputs that we need to account for.
     if isfield(grangerfile, 'decodingROIs') && ~isempty(grangerfile.decodingROIs)
-        sspace_all = {grangerfile.granger_result_package(:).sspace};
-        sspace = sspace_all{1}; %May need for parfor loop?
-        residuals_all = {grangerfile.granger_result_package(:).residuals};
-        residuals = residuals_all{1}; %May need for parfor loop?
-        modifiedData = {grangerfile.granger_result_package(:).modifiedData};
+        names = {grangerfile.granger_result_package(:).name};
+        default_idx = find(matches(names, 'No Exploded'));%by default, use the set with no exploded ROIs
+        sspace = grangerfile.granger_result_package(default_idx).sspace;
+        %sspace = sspace_all{end-1}; %May need for parfor loop?
+        residuals = grangerfile.granger_result_package(default_idx).residuals;
+        %residuals = residuals_all{end-1}; %May need for parfor loop?
+        data = grangerfile.granger_result_package(default_idx).modifiedData;
         roinames = {grangerfile.rois(:).name};
         decodingROInames = {grangerfile.decodingROIs(:).name};
         [~, decodingROIlist, ~] = intersect(roinames, decodingROInames);
@@ -63,10 +67,10 @@ if(~isempty(strfind(operation, 'c')))
     else
         sspace = grangerfile.sspace;
         residuals = grangerfile.residual;
+        data = grangerfile.data;
         decoders = 0;
         granger_results = grangerfile.granger_results; %#ok<NASGU> For purposes of saving
     end
-    data = grangerfile.data;
     rois = grangerfile.rois;
     pred_adapt = grangerfile.pred_adapt;
     model_order = grangerfile.model_order;
@@ -117,7 +121,7 @@ if(~isempty(strfind(operation, 'c')))
         end
         N_src = max(length(src_ROIs{1}), length(src_ROIs{2}));
         N_snk = max(length(snk_ROIs{1}), length(snk_ROIs{2}));
-    else
+    else % no focus ROIs defined
         src_ROIs{1} = 1:N_ROIs;
         snk_ROIs{1} = 1:N_ROIs;
         src_ROIs{2} = [];
@@ -141,8 +145,8 @@ if(~isempty(strfind(operation, 'c')))
     %N_parallel_processes = 8;
     N_parallel_processes = 16; %clive has 16 cores to processs 10/26/2020 ON
     %matlabpool(num2str(N_parallel_processes))
-    parpool(N_parallel_processes);
-    
+    pool = parpool(N_parallel_processes);
+    addAttachedFiles(pool, inputfilename);
     % Make a progress marking directory
     prog_dir = sprintf('%s/GPS/tmp_%s', gps_presets('studyparameters'), datestr(now, 'yyyymmdd_hhMMss'));
     mkdir(prog_dir);
@@ -170,13 +174,18 @@ if(~isempty(strfind(operation, 'c')))
                 if decoders
                     if any(decodingROIlist==i_ROI_src)
                         i_granger = find(decodingROIlist==i_ROI_src);
+                        grangerfile = load(inputfilename, 'granger_result_package');
+                        resid = grangerfile.granger_result_package(i_granger).residuals;
+                        ss = grangerfile.granger_result_package(i_granger).sspace;
+                        dat = grangerfile.granger_result_package(i_granger).modifiedData;
+                        grangerfile = structfun(@(f)[], grangerfile, 'uni', 0);
                     else
-                        i_granger = length(decodingROIlist)+1;
+                        resid = residuals;
+                        ss = sspace;
+                        dat = data;
                     end
                     %fprintf('Granger Set Number %d\n', i_granger);
-                    resid = residuals_all{i_granger};
-                    ss = sspace_all{i_granger};
-                    dat = modifiedData{i_granger};
+          
                     %disp(N_subROIs);
                 else
                     resid = residuals;
@@ -242,22 +251,23 @@ if(~isempty(strfind(operation, 'c')))
                 i_ROI_src = src_ROIs{i_null_set}(i_src); %#ok<*PFBNS>
                             % Step 5: For each subject, resample the residuals (random sampling
                 % with replacement)
-                residuals_resample = zeros(N_trials, N_ROIs, N_time);
-%                 resid = zeros(N_trials, N_ROIs, N_time);
-%                 ss = zeros(N_ROIs*modelorder, N_ROIs, N_time);
-%                 dat = zeros(N_trials, N_ROIs, N_time);
-%                 gci = zeros(N_ROIs, N_ROIs, N_time);
                 
                 if decoders
                     if any(decodingROIlist==i_ROI_src)
                         i_granger = find(decodingROIlist==i_ROI_src);
+                        grangerfile = load(inputfilename, 'granger_result_package');
+                        resid = grangerfile.granger_result_package(i_granger).residuals;
+                        ss = grangerfile.granger_result_package(i_granger).sspace;
+                        dat = grangerfile.granger_result_package(i_granger).modifiedData;
+                        grangerfile = structfun(@(f)[], grangerfile, 'uni', 0);
                     else
-                        i_granger = length(decodingROIlist)+1;
+                        resid = residuals;
+                        ss = sspace;
+                        dat = data;
                     end
                     %fprintf('Granger Set Number %d\n', i_granger);
-                    resid = residuals_all{i_granger};
-                    ss = sspace_all{i_granger};
-                    dat = modifiedData{i_granger};
+          
+                    %disp(N_subROIs);
                 else
                     resid = residuals;
                     ss = sspace;
@@ -334,7 +344,7 @@ if(~isempty(strfind(operation, 'c')))
         end
         
         total_control_granger = nan(N_snk, N_src, N_time, N_comp, 'single');
-
+        % Package multiple sets into a single array
         if ~isempty(src_ROIs{2})
             total_control_granger(snk_ROIs{1}, src_ROIs{1}, :, :) = total_control_granger_set1;
             total_control_granger(snk_ROIs{2}, src_ROIs{2}, :, :) = total_control_granger_set2;
