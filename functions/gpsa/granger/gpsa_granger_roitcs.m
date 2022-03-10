@@ -211,17 +211,20 @@ if(~isempty(strfind(operation, 'c')))
 
         % Loop through the subdivisions and grab data when there is a match.
         for iLabelFile = 1:length(labelFiles)
-          labelFileContents = mne_read_label_file(sprintf("%s/%s", roiDir, ...
+          labelFileContents = mne_read_label_file1(sprintf("%s/%s", roiDir, ...
                                                           labelFiles(iLabelFile).name));
           subroi.parent = rois.rois(iRoi).name;
           % Grab the name of this sub-roi from the file name.
           [~, subroi.name, ~] = fileparts(labelFiles(iLabelFile).name);
           subroi.vertexMap = [];
           subroi.vertices = [];
+          % Right hemisphere indices are continuined from left hemisphere
+          % in the combined brain
           if contains(labelFiles(iLabelFile).name, 'rh')
               brain = gps_brain_get(subject);
               labelFileContents.vertices = labelFileContents.vertices+brain.N_L;
           end
+          
 
           %% Check to make sure at least one of the subROI's vertices
           %% has an activation time series associated with it.

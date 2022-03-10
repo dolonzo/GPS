@@ -141,7 +141,10 @@ if(~isempty(strfind(operation, 'c')))
                 % Locate the vertex with the highest PLV
                 labelfile = sprintf('%s/%s', subject_roidir, roi_file);
                 labelfile_contents = mne_read_label_file(labelfile);
-                [activity, ~, vertices] = mne_label_time_courses(labelfile, actfile); % mid is time
+                [activity, ~, vertices] = mne_label_time_courses1(labelfile, actfile); % mid is time
+                % Changed to update the label vertex list to be 1 based
+                % (matching the stc and inverse operators)  dos 3/22
+                
                 
                 % Avatar method. We characterize an ROI by using the
                 % activation time series from a single vertex within
